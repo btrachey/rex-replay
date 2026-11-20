@@ -161,7 +161,7 @@ local actions, picks_shown, written, logged = {}, {}, {}, {}
 local fake_output = ''
 local blob, blob_page, fail_after, read_calls
 -- scripted fm backend; the summarizer's rex.exec branch reads this
-local fm = { calls = {}, mode = nil, stdout = '' }
+local fm = { calls = {}, mode = nil, stdout = '', responds_total = 0 }
 local function fm_reset(stdout, mode)
   fm.calls, fm.mode, fm.stdout = {}, mode, stdout
 end
@@ -186,6 +186,7 @@ rex = {
       if argv[2] == '--help' then
         return { ok = true, code = 0, stdout = '', stderr = '' } -- probe
       end
+      fm.responds_total = fm.responds_total + 1
       if fm.mode == 'fail' then
         return { ok = false, code = 1, stdout = '', stderr = 'boom' }
       end
@@ -563,6 +564,15 @@ local p2 = sum._parse_labels('open pull request\ninstall package\n', 2)
 assert(p2[1] == 'open pull request' and p2[2] == 'install package', 'positional fallback')
 local p3 = sum._parse_labels('Sure! Here you go:\n1: open pull request\n2: install package\n', 2)
 assert(p3[1] == 'open pull request' and p3[2] == 'install package', 'preamble not skipped: ' .. tostring(p3[1]))
+-- positional zip must refuse anything but exactly one line per item: a
+-- shifted label misdescribes the command that gets typed
+assert(next(sum._parse_labels('open PR\ninstall pkg\n', 2)) ~= nil, 'exact positional rejected')
+local p5 = sum._parse_labels('Sure! Here you go:\nopen PR\ninstall pkg\n', 2)
+assert(next(p5) == nil, 'shifted positional accepted: ' .. tostring(p5[1]))
+local p6 = sum._parse_labels('Sure!\nopen PR\n', 2)
+assert(next(p6) == nil, 'preamble-sized positional accepted: ' .. tostring(p6[1]))
+local p7 = sum._parse_labels('open PR\n', 2)
+assert(next(p7) == nil, 'short positional accepted')
 local q = sum._clean_label(' "Open the PR. " ')
 assert(q == 'Open the PR', 'quote/period cleanup: ' .. tostring(q))
 assert(sum._clean_label("I can't summarize that.") == nil, 'refusal not rejected')
@@ -586,17 +596,39 @@ assert(
   'prompt items'
 )
 local argv = fm.calls[#fm.calls]
-local instr = argv[4]
-assert(instr == '-i', 'instructions flag: ' .. tostring(instr))
-assert(argv[3] == '--no-stream', 'streaming not disabled')
-assert(argv[5]:find('shorter than 43 characters', 1, true), 'prompt lacks length limit')
+local function argv_at(flag)
+  for i, a in ipairs(argv) do
+    if a == flag then
+      return argv[i + 1], i
+    end
+  end
+end
+assert(argv_at('-i'):find('shorter than 43 characters', 1, true), 'prompt lacks length limit')
+assert(argv_at('--model') == 'system', 'on-device model not pinned')
+local saw_no_stream = false
+for _, a in ipairs(argv) do
+  if a == '--no-stream' then
+    saw_no_stream = true
+  end
+end
+assert(saw_no_stream, 'streaming not disabled')
 local huge = { { id = string.rep('u', 500), title = 'u' }, { id = 'v', title = 'v' } }
 sum.summarize(huge)
 assert(
   last_prompt():find(string.rep('u', 200), 1, true) and not last_prompt():find(string.rep('u', 201), 1, true),
   'id trim'
 )
-print('ok   prompt: length limit, --no-stream, id trim')
+-- only the first max_items items reach the prompt
+local many = {}
+for i = 1, 30 do
+  many[i] = { id = 'cmd number ' .. i, title = 'raw' .. i }
+end
+sum.configure { max_items = 5 }
+sum.summarize(many)
+local pr2 = last_prompt()
+assert(pr2:find('5: cmd number 5', 1, true) and not pr2:find('6: cmd number 6', 1, true), 'prompt not sliced')
+sum.configure {}
+print('ok   prompt: length limit, model pinned, --no-stream, id trim, max_items slice')
 
 -- titles replaced, ids untouched, summaries cached for recall
 logged = {}
@@ -697,6 +729,36 @@ assert(
   sum7o._available == false and sum7o._fails >= 3,
   'breaker state: ' .. tostring(sum7o._available) .. '/' .. tostring(sum7o._fails)
 )
+
+-- the breaker counts CONSECUTIVE failures: fails, a good batch, fails
+-- again (fewer than 3 in a row) must still be calling fm
+local M7b = load_plugin()
+M7b.setup { skip_keybinds = true }
+rex.ui.pick = function(o)
+  picks_shown[#picks_shown + 1] = o
+  return nil, 'cancelled'
+end
+local function replay_n(n)
+  for _ = 1, n do
+    actions.replay_command.run { block_id = 'block:test' }
+  end
+end
+local sum7b = require('rex_replay.summarizer')._opts
+local n0 = fm.responds_total
+fm_reset('', 'fail')
+replay_n(2)
+fm_reset('1: read the guide\n2: run make deploy\n3: open PR feat-login in web\n')
+replay_n(1)
+fm_reset('', 'fail')
+replay_n(2)
+assert(fm.responds_total - n0 == 5, 'consecutive-fail breaker tripped early: ' .. (fm.responds_total - n0))
+assert(sum7b._available ~= false, 'breaker stayed tripped through success')
+replay_n(1) -- third in a row now trips
+assert(
+  fm.responds_total - n0 == 6 and sum7b._available == false,
+  'breaker never tripped: ' .. (fm.responds_total - n0) .. '/' .. tostring(sum7b._available)
+)
+print('ok   breaker counts consecutive failures only')
 print('ok   fm timeouts never disable; 3 hard failures trip breaker')
 
 -- fm absent: probe fails, respond is never attempted

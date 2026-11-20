@@ -42,9 +42,12 @@ end
 
 local MAX_ID_CHARS = 200 -- ids are full commands; trim absurd ones from the prompt
 
-local function build_prompt(items)
+-- Only the first `count` items (the max_items window) go into the prompt;
+-- numbering the whole 250-item tail would burn model context on labels
+-- that get discarded at parse time.
+local function build_prompt(items, count)
   local lines = {}
-  for i = 1, #items do
+  for i = 1, count do
     lines[i] = i .. ': ' .. items[i].id:sub(1, MAX_ID_CHARS)
   end
   return table.concat(lines, '\n')
@@ -75,6 +78,35 @@ local function looks_like_refusal(s)
   return false
 end
 
+-- Chat-style preambles the model sometimes emits before the real list;
+-- never valid as an action label, and dangerous in the positional branch.
+local preamble_pats = {
+  '^sure',
+  '^here you go',
+  "^here'?s ",
+  '^here is',
+  '^here are',
+  '^certainly',
+  '^of course',
+  '^no problem',
+  '^below (are|is) ',
+  '^following (are|is) ',
+  "^i'?ll ",
+  '^okay$',
+  '^ok$',
+  '^absolutely',
+}
+
+local function looks_like_preamble(line)
+  local s = line:lower()
+  for _, pat in ipairs(preamble_pats) do
+    if s:find(pat) then
+      return true
+    end
+  end
+  return false
+end
+
 -- Normalize one model-produced label; nil when unusable.
 local function clean_label(line)
   if line == nil then
@@ -92,6 +124,9 @@ local function clean_label(line)
     return nil
   end
   if looks_like_refusal(s) then
+    return nil
+  end
+  if looks_like_preamble(s) then
     return nil
   end
   if #s > opts.chars then
@@ -129,8 +164,20 @@ local function parse_labels(text, count)
       end
     end
   else
-    for i = 1, math.min(#lines, count) do
-      labels[i] = clean_label(lines[i]:match('^%s*%d+%s*[:%.%)%]]?%s*(.+)$') or lines[i])
+    -- Positional zip is only trustworthy when there is exactly one line
+    -- per item and none of them is chat chatter: a preamble or dropped
+    -- line would shift every label onto the wrong command, and a wrong
+    -- summary is worse than a raw title (it misdescribes what gets
+    -- typed). Anything else: keep all raw titles.
+    if #lines == count then
+      for _, line in ipairs(lines) do
+        if looks_like_preamble(line) then
+          return {}
+        end
+      end
+      for i = 1, count do
+        labels[i] = clean_label(lines[i]:match('^%s*%d+%s*[:%.%)%]]?%s*(.+)$') or lines[i])
+      end
     end
   end
   return labels
@@ -161,11 +208,19 @@ local function summarize(items)
   for i = 1, #opts.cmd do
     argv[i] = opts.cmd[i]
   end
+  -- pin the on-device model: `fm` otherwise honors its CLI config, and a
+  -- user-configured pcc/provider would silently ship pane contents off-device
+  argv[#argv + 1] = '--model'
+  argv[#argv + 1] = 'system'
   argv[#argv + 1] = '--no-stream'
   argv[#argv + 1] = '-i'
   argv[#argv + 1] = instructions()
-  argv[#argv + 1] = build_prompt(items)
-  local res, err = rex.exec(argv, { cwd = os.getenv('HOME') or '/tmp', timeout = opts.timeout })
+  argv[#argv + 1] = build_prompt(items, count)
+  -- batch generation is output-bound (~0.5 s/label measured); a fixed
+  -- budget would time out full 24-item batches into raw titles on the
+  -- busy panes that most want summaries
+  local budget = math.min(30, math.max(opts.timeout, 4 + 1.2 * count))
+  local res, err = rex.exec(argv, { cwd = os.getenv('HOME') or '/tmp', timeout = budget })
   if res == nil or not res.ok then
     -- a missing program or a hard error is permanent for this config
     -- load; a timeout may be transient (the model can be busy), so it
@@ -181,6 +236,7 @@ local function summarize(items)
     return items
   end
   local labels = parse_labels(res.stdout, count)
+  opts._fails = 0 -- consecutive-failure breaker, not lifetime
 
   -- duplicate summaries defeat the point of the list; drop them in favour
   -- of the unique elided raw titles

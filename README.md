@@ -177,11 +177,14 @@ Tune it under `summarize =`:
 ```lua
 replay.setup({
   summarize = {
-    enabled = true,     -- default true; false keeps raw titles
-    cmd = { 'fm' },     -- the fm executable; default { 'fm' }
-    chars = 43,         -- length limit stated in the prompt (and enforced)
-    timeout = 12,       -- seconds per fm call
-    max_items = 24,     -- items past this keep raw titles
+    enabled = true,          -- default true; false keeps raw titles
+    cmd = { 'fm', 'respond' }, -- argv prefix for the call; --model system
+                             -- --no-stream -i <instructions> <prompt> are
+                             -- appended to it
+    chars = 43,              -- length limit stated in the prompt (and enforced)
+    timeout = 12,            -- minimum seconds per fm call; scales with the
+                             -- batch (up to 30s) since generation is output-bound
+    max_items = 24,          -- items past this keep raw titles
   },
 })
 ```
