@@ -43,6 +43,32 @@ local function tail_bytes(s, n)
   return s:sub(start)
 end
 
+-- End-truncation (what the palette does to long titles) always discards the
+-- distinguishing suffix, so long picker titles are elided in the MIDDLE
+-- instead: the head (scheme/domain/path start) and the tail (branch, PR
+-- number, query) both survive, which is where matches actually differ.
+-- Byte cuts walk to UTF-8 boundaries in both directions.
+local ELLIPSIS = '\226\128\166' -- U+2026
+local TITLE_HEAD = 24
+local TITLE_TAIL = 18
+
+local function elide_middle(s)
+  if #s <= TITLE_HEAD + #ELLIPSIS + TITLE_TAIL then
+    return s
+  end
+  -- head: end at a character boundary (back up off a continuation byte)
+  local head_end = TITLE_HEAD
+  while head_end > 1 do
+    local b = s:byte(head_end + 1)
+    if b == nil or b < 0x80 or b >= 0xC0 then
+      break -- next byte starts a character; head ends clean
+    end
+    head_end = head_end - 1
+  end
+  local tail = tail_bytes(s, TITLE_TAIL)
+  return s:sub(1, head_end) .. ELLIPSIS .. tail
+end
+
 -- ─── Recall cache ─────────────────────────────────────────────────────────
 
 local cache_dir_override -- test hook; nil reads the environment
@@ -102,6 +128,7 @@ return {
   cache_path = cache_path,
   cache_results = cache_results,
   load_cache = load_cache,
+  elide_middle = elide_middle,
   -- internal, for the test harness
   _set_cache_dir = function(dir)
     cache_dir_override = dir

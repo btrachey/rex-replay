@@ -146,13 +146,15 @@ local function extract_all(text)
             seq = seq + 1
           end
         else
-          -- The palette has a client-fixed width and truncates the title,
-          -- so show only the match itself: id keeps the full command the
-          -- plugin types (prefix/postfix included), and the built-in URL
-          -- extractor also drops the near-identical scheme from the title.
+          -- The palette is client-sized (≈43 cells in Rex for Mac) and
+          -- end-truncates, which always discards the distinguishing suffix.
+          -- So the title shows only the match — id keeps the full command
+          -- with prefix/postfix for typing — and long matches are elided in
+          -- the MIDDLE: head and tail survive, and that is where matches
+          -- actually differ (e.g. two PR URLs under one repo).
           item = {
             id = label,
-            title = ex.display and ex.display(t) or t,
+            title = util.elide_middle(ex.display and ex.display(t) or t),
             subtitle = ex.label,
             icon = ex.icon,
             pos = m.pos,

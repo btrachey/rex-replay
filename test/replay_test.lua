@@ -316,6 +316,50 @@ local bt1 = replay._extract_all('run `git push -u origin HEAD`')
 assert(bt1[1].title == 'git push -u origin HEAD' and bt1[1].id == bt1[1].title, 'backtick title/id wrong')
 print('ok   titles displayized, ids keep full command')
 
+-- middle elision: two long URLs under one repo must show distinct tails,
+-- keep full ids, and stay within the palette's ~43-cell row
+local twin = replay._extract_all(
+  'x https://github.com/TopGolf/strapi-cms/pull/new/feat-TGA-18210-update-booking-content y '
+    .. 'z https://github.com/TopGolf/strapi-cms/pull/new/feat-TGA-99999-zz-other-branch w'
+)
+assert(#twin == 2, 'twin count: ' .. #twin)
+local ta, tb = twin[1].title, twin[2].title
+assert(ta ~= tb, 'twins collapsed to one title: ' .. ta)
+assert(#ta <= 45 and #tb <= 45, 'title over palette row: ' .. #ta .. '/' .. #tb)
+local both = ta .. '|' .. tb
+assert(both:find('…', 1, true), 'no ellipsis: ' .. both)
+assert(both:find('booking-content', 1, true) and both:find('other-branch', 1, true), 'tails lost: ' .. both)
+assert(both:find('github.com/TopGolf/strap', 1, true), 'heads lost: ' .. both)
+local twin_ids = {}
+for _, it in ipairs(twin) do
+  twin_ids[it.id] = true
+end
+assert(
+  twin_ids['open https://github.com/TopGolf/strapi-cms/pull/new/feat-TGA-18210-update-booking-content'],
+  'id elided'
+)
+assert(twin_ids['open https://github.com/TopGolf/strapi-cms/pull/new/feat-TGA-99999-zz-other-branch'], 'id elided')
+print('ok   long twins: distinct tail-visible titles, full ids')
+
+-- elide_middle never splits a multibyte char at either cut
+local util_mod = require('rex_replay.util')
+local mb = string.rep('a', 24) .. '\228\128\128\228\128\129' .. string.rep('b', 30) -- 3-byte chars across the head cut
+local el = util_mod.elide_middle(mb)
+local function valid_utf8(s)
+  local i, n = 1, #s
+  while i <= n do
+    local b = s:byte(i)
+    local len = b < 0x80 and 1
+      or (b >= 0xF0 and 4 or (b >= 0xE0 and 3 or (b >= 0xC0 and 2 or error('stray continuation'))))
+    assert(b < 0x80 or b >= 0xC0, 'lead byte expected at ' .. i)
+    i = i + len
+  end
+  return true
+end
+assert(valid_utf8(el), 'elision produced invalid UTF-8')
+assert(el:find('…', 1, true), 'no ellipsis')
+print('ok   middle elision is utf-8 safe')
+
 -- custom extractors: pattern + prefix/postfix; function extractor
 local M2 = load_plugin()
 M2.setup {
