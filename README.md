@@ -136,6 +136,11 @@ The actions are registered as `replay_command` and `replay_recall`, so they
 also appear in the command palette and can run with
 `rex do replay_command -s SESSION -b BLOCK`.
 
+The module also returns `replay.replay(ctx)` and `replay.recall(ctx)` for
+driving the flow from scripts (`rex do`) or other actions. They show the
+picker, so — same rule as above — call them only from an action's `run` or a
+script, never from a key-bound function.
+
 ## Recall
 
 If the extractors match more than one text segment, you get Rex's command

@@ -10,6 +10,29 @@
 local root = arg[0]:match('^(.*)/[^/]*$') or '.'
 package.path = root .. '/../plugin/?.lua;' .. package.path
 
+-- Isolation guard: if the cache-dir override below ever regresses, fixture
+-- lists must never leak into the real $XDG_CACHE_HOME/rex-replay/cache.json
+-- that a live replay_recall would auto-type. Snapshot it up front; the last
+-- case asserts it is untouched and restores it on failure.
+local real_cache_path
+do
+  local dir = os.getenv('XDG_CACHE_HOME')
+  if dir == nil or dir == '' then
+    dir = (os.getenv('HOME') or '.') .. '/.cache'
+  end
+  real_cache_path = dir .. '/rex-replay/cache.json'
+end
+local function slurp(path)
+  local f = io.open(path, 'r')
+  if f == nil then
+    return nil
+  end
+  local raw = f:read('*a')
+  f:close()
+  return raw
+end
+local cache_snapshot = slurp(real_cache_path)
+
 -- ── minimal JSON (encode/decode of the shapes the cache uses) ────────────
 local function json_stub()
   local M = {}
@@ -435,5 +458,26 @@ local tb = replay._tail_bytes(s, 131072)
 assert(tb == string.rep('a', 131071), 'tail_bytes left a split char, first byte ' .. tb:byte(1))
 assert(replay._tail_bytes(s, #s) == s, 'short string untouched')
 print('ok   tail cut utf-8 safe')
+
+-- ── isolation guard (must stay last) ─────────────────────────────────────
+-- No fixture item may ever reach the real recall cache: if the override
+-- regressed, restore the snapshot and fail so a stale list can't be typed
+-- into the next real replay_recall.
+local after = slurp(real_cache_path)
+if after ~= cache_snapshot then
+  local out = io.open(real_cache_path, 'w')
+  if out then
+    if cache_snapshot then
+      out:write(cache_snapshot)
+    end
+    out:close()
+  end
+  if cache_snapshot == nil then
+    os.remove(real_cache_path)
+  end
+  print('FAIL real recall cache was touched: ' .. real_cache_path)
+  os.exit(1)
+end
+print('ok   real recall cache untouched')
 
 print('ALL PASS')

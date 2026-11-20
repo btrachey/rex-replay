@@ -71,6 +71,10 @@ end
 
 return {
   setup = setup,
+  -- Direct entry points for scripts (`rex do`) and other actions. They show
+  -- rex.ui.pick, so only call them from an action's run or a script — a
+  -- key-bound function makes the picker silently fail. Key bindings should
+  -- name the actions: 'replay_command' / 'replay_recall'.
   replay = actions.replay_command,
   recall = actions.replay_recall,
   -- internals, exposed for testing from a `rex do` script
