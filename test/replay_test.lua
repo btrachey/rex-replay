@@ -304,6 +304,18 @@ for _, it in ipairs(items) do
 end
 print('ok   pick items clean of ranking keys')
 
+-- titles stay short for the fixed-width palette; ids stay typeable
+local shown = replay._extract_all('see https://github.com/TopGolf/strapi-cms/pull/new/feat-x done')
+assert(#shown == 1, 'url fixture: ' .. #shown)
+assert(
+  shown[1].id == 'open https://github.com/TopGolf/strapi-cms/pull/new/feat-x',
+  'id lost the command: ' .. shown[1].id
+)
+assert(shown[1].title == 'github.com/TopGolf/strapi-cms/pull/new/feat-x', 'title not displayized: ' .. shown[1].title)
+local bt1 = replay._extract_all('run `git push -u origin HEAD`')
+assert(bt1[1].title == 'git push -u origin HEAD' and bt1[1].id == bt1[1].title, 'backtick title/id wrong')
+print('ok   titles displayized, ids keep full command')
+
 -- custom extractors: pattern + prefix/postfix; function extractor
 local M2 = load_plugin()
 M2.setup {

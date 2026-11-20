@@ -88,6 +88,7 @@ Extractors take the format of
   prefix = 'prefix_string',       -- prepended to the match, with a space
   postfix = 'postfix_string',     -- appended to the match, with a space
   pattern = 'ABC%-%d+',           -- a Lua pattern; capture group 1 is the match
+  display = function(s) ... end,  -- optional; transforms the shown title
 }
 ```
 
@@ -144,7 +145,10 @@ script, never from a key-bound function.
 ## Recall
 
 If the extractors match more than one text segment, you get Rex's command
-palette to choose from (type to filter). The list stays cached — in
+palette to choose from (type to filter). Rows show the match itself — for
+URLs without the `open ` prefix or scheme, since the palette is
+client-sized and truncates long titles — while what gets typed at the
+prompt is the full command including the prefix. The list stays cached — in
 `$XDG_CACHE_HOME/rex-replay/cache.json` — so `ctrl+b>q` can offer the other
 matches again after you used the first one, until the next replay replaces
 the cache. Like the WezTerm plugin, a list of exactly one match is typed

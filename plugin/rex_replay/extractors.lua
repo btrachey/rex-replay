@@ -23,6 +23,13 @@ local function trim_url(s)
   return s:sub(1, finish)
 end
 
+-- The palette truncates long titles at a client-fixed width, and every
+-- built-in URL shareable the same 'https://' lead; drop it (and the 'open '
+-- prefix, which the title never needs — id keeps the full command).
+local function display_url(s)
+  return (s:gsub('^%w+://', ''))
+end
+
 local default_extractors = {
   -- commands inside `backticks`, one per line
   {
@@ -36,6 +43,7 @@ local default_extractors = {
     icon = 'link',
     prefix = 'open',
     clean = trim_url,
+    display = display_url,
     patterns = {
       '%((%w+://%S+)%)',
       '%[(%w+://%S+)%]',
@@ -138,9 +146,13 @@ local function extract_all(text)
             seq = seq + 1
           end
         else
+          -- The palette has a client-fixed width and truncates the title,
+          -- so show only the match itself: id keeps the full command the
+          -- plugin types (prefix/postfix included), and the built-in URL
+          -- extractor also drops the near-identical scheme from the title.
           item = {
             id = label,
-            title = label,
+            title = ex.display and ex.display(t) or t,
             subtitle = ex.label,
             icon = ex.icon,
             pos = m.pos,
