@@ -160,6 +160,11 @@ end
 local actions, picks_shown, written, logged = {}, {}, {}, {}
 local fake_output = ''
 local blob, blob_page, fail_after, read_calls
+-- scripted fm backend; the summarizer's rex.exec branch reads this
+local fm = { calls = {}, mode = nil, stdout = '' }
+local function fm_reset(stdout, mode)
+  fm.calls, fm.mode, fm.stdout = {}, mode, stdout
+end
 
 rex = {
   log = function(lvl, msg)
@@ -173,6 +178,22 @@ rex = {
   end,
   json = json_stub(),
   exec = function(argv)
+    if argv[1] == 'fm' then -- scripted summarizer backend
+      fm.calls[#fm.calls + 1] = argv
+      if fm.mode == 'absent' then
+        return nil, 'not_found'
+      end
+      if argv[2] == '--help' then
+        return { ok = true, code = 0, stdout = '', stderr = '' } -- probe
+      end
+      if fm.mode == 'fail' then
+        return { ok = false, code = 1, stdout = '', stderr = 'boom' }
+      end
+      if fm.mode == 'timeout' then
+        return { ok = false, timed_out = true, code = -1, signal = 'SIGTERM', stdout = '', stderr = '' }
+      end
+      return { ok = true, code = 0, stdout = fm.stdout or '', stderr = '' }
+    end
     os.execute("mkdir -p '" .. argv[3] .. "'")
     return { ok = true }
   end,
@@ -514,6 +535,204 @@ local tb = replay._tail_bytes(s, 131072)
 assert(tb == string.rep('a', 131071), 'tail_bytes left a split char, first byte ' .. tb:byte(1))
 assert(replay._tail_bytes(s, #s) == s, 'short string untouched')
 print('ok   tail cut utf-8 safe')
+
+-- ── fm summarizer ─────────────────────────────────────────────────────────
+blob = nil -- the paging tests leave the blob server armed; capture must use fake_output
+-- fake `fm` is scripted via fm_reset(stdout, mode); fm.calls records every
+-- argv. The probe call (fm --help) is excluded from respond counts.
+local function respond_calls()
+  local n = 0
+  for _, argv in ipairs(fm.calls) do
+    if argv[2] ~= '--help' then
+      n = n + 1
+    end
+  end
+  return n
+end
+local function last_prompt()
+  local argv = fm.calls[#fm.calls]
+  return argv and argv[#argv]
+end
+
+local sum = require('rex_replay.summarizer')
+
+-- parsing
+local p = sum._parse_labels('1: open pull request\n2: install package\n', 2)
+assert(p[1] == 'open pull request' and p[2] == 'install package', 'numbered parse')
+local p2 = sum._parse_labels('open pull request\ninstall package\n', 2)
+assert(p2[1] == 'open pull request' and p2[2] == 'install package', 'positional fallback')
+local p3 = sum._parse_labels('Sure! Here you go:\n1: open pull request\n2: install package\n', 2)
+assert(p3[1] == 'open pull request' and p3[2] == 'install package', 'preamble not skipped: ' .. tostring(p3[1]))
+local q = sum._clean_label(' "Open the PR. " ')
+assert(q == 'Open the PR', 'quote/period cleanup: ' .. tostring(q))
+assert(sum._clean_label("I can't summarize that.") == nil, 'refusal not rejected')
+assert(sum._clean_label('   ') == nil, 'blank not rejected')
+local long = sum._clean_label(string.rep('z', 200))
+assert(#long <= 43, 'label over width: ' .. #long)
+assert(long:find('…', 1, true), 'over-long label not elided')
+print('ok   fm label parsing, cleanup, width clamp')
+
+-- prompt carries the length limit and the numbered commands
+fm_reset('1: a\n2: b\n')
+local mi = {
+  { id = 'open https://one.test/x', title = 'one' },
+  { id = 'open https://two.test/y', title = 'two' },
+}
+sum.configure {}
+sum.summarize(mi)
+local pr = last_prompt()
+assert(
+  pr:find('1: open https://one.test/x', 1, true) and pr:find('2: open https://two.test/y', 1, true),
+  'prompt items'
+)
+local argv = fm.calls[#fm.calls]
+local instr = argv[4]
+assert(instr == '-i', 'instructions flag: ' .. tostring(instr))
+assert(argv[3] == '--no-stream', 'streaming not disabled')
+assert(argv[5]:find('shorter than 43 characters', 1, true), 'prompt lacks length limit')
+local huge = { { id = string.rep('u', 500), title = 'u' }, { id = 'v', title = 'v' } }
+sum.summarize(huge)
+assert(
+  last_prompt():find(string.rep('u', 200), 1, true) and not last_prompt():find(string.rep('u', 201), 1, true),
+  'id trim'
+)
+print('ok   prompt: length limit, --no-stream, id trim')
+
+-- titles replaced, ids untouched, summaries cached for recall
+logged = {}
+local M4 = load_plugin()
+M4.setup { skip_keybinds = true }
+fm_reset('1: read the guide\n2: run make deploy\n3: open PR feat-login in web\n')
+fake_output = 'https://git.test/pr/new/feat-login `make deploy` https://docs.test/guide'
+written, picks_shown = {}, {}
+rex.ui.pick = function(o)
+  picks_shown[#picks_shown + 1] = o
+  return o.items[1].id
+end
+actions.replay_command.run { block_id = 'block:test' }
+local shown_items = picks_shown[1].items
+assert(shown_items[1].title == 'read the guide', 'title 1: ' .. shown_items[1].title)
+assert(shown_items[2].title == 'run make deploy', 'title 2: ' .. shown_items[2].title)
+assert(shown_items[3].title == 'open PR feat-login in web', 'title 3: ' .. shown_items[3].title)
+assert(shown_items[3].id == 'open https://git.test/pr/new/feat-login', 'id changed!: ' .. shown_items[3].id)
+assert(written[1] == 'open https://docs.test/guide', 'typed not full id: ' .. tostring(written[1]))
+reset()
+rex.ui.pick = function(o)
+  picks_shown[#picks_shown + 1] = o
+  return o.items[1].id
+end
+actions.replay_recall.run { block_id = 'block:test' }
+local rec = picks_shown[1].items
+assert(
+  #rec == 3 and rec[1].title == 'read the guide' and rec[3].title == 'open PR feat-login in web',
+  'recall lost summaries'
+)
+assert(rec[3].id == 'open https://git.test/pr/new/feat-login', 'recall lost id')
+print('ok   fm titles shown + cached, ids stay full commands')
+
+-- duplicated labels fall back to raw elided titles (duplicates defeat the list)
+local M5 = load_plugin()
+M5.setup { skip_keybinds = true }
+fm_reset('1: open GitHub link\n2: open GitHub link\n3: read the guide\n')
+written, picks_shown = {}, {}
+rex.ui.pick = function(o)
+  picks_shown[#picks_shown + 1] = o
+  return nil, 'cancelled'
+end
+actions.replay_command.run { block_id = 'block:test' }
+local dup = picks_shown[1].items
+assert(dup[1].title == 'docs.test/guide', 'dup label applied: ' .. dup[1].title)
+assert(dup[2].title == 'make deploy', 'dup label applied: ' .. dup[2].title)
+assert(dup[3].title == 'read the guide', 'unique label lost: ' .. dup[3].title)
+print('ok   duplicate fm labels fall back to raw titles')
+
+-- missing items keep their raw title (partial answers are fine)
+local M6 = load_plugin()
+M6.setup { skip_keybinds = true }
+fm_reset('1: only the first\n')
+written, picks_shown = {}, {}
+rex.ui.pick = function(o)
+  picks_shown[#picks_shown + 1] = o
+  return nil, 'cancelled'
+end
+actions.replay_command.run { block_id = 'block:test' }
+local part = picks_shown[1].items
+assert(part[1].title == 'only the first', 'partial 1: ' .. part[1].title)
+assert(part[3].title == 'git.test/pr/new/feat-login', 'partial 3 raw: ' .. part[3].title)
+print('ok   missing fm labels keep raw titles')
+
+-- failure modes fall back without blocking; timeouts never trip the breaker
+local M7 = load_plugin()
+M7.setup { skip_keybinds = true }
+local sum7 = require('rex_replay.summarizer')
+fm_reset('', 'timeout')
+written, picks_shown = {}, {}
+rex.ui.pick = function(o)
+  picks_shown[#picks_shown + 1] = o
+  return nil, 'cancelled'
+end
+for _ = 1, 5 do
+  actions.replay_command.run { block_id = 'block:test' }
+end
+local tout = picks_shown[5].items
+assert(tout[1].title ~= 'open PR', 'timeout applied a label')
+assert(tout[1].title == 'docs.test/guide', 'timeout lost raw title: ' .. tout[1].title)
+assert(respond_calls() == 5, 'timeout tripped breaker: ' .. respond_calls() .. ' calls')
+local logged_timeout = false
+for _, l in ipairs(logged) do
+  if l:find('timeout', 1, true) then
+    logged_timeout = true
+  end
+end
+assert(logged_timeout, 'timeout not logged')
+
+fm_reset('', 'fail')
+local respond_n_before = respond_calls()
+for _ = 1, 4 do
+  actions.replay_command.run { block_id = 'block:test' }
+end
+assert(respond_calls() - respond_n_before == 3, 'hard-fail breaker: ' .. (respond_calls() - respond_n_before))
+local sum7o = require('rex_replay.summarizer')._opts
+assert(
+  sum7o._available == false and sum7o._fails >= 3,
+  'breaker state: ' .. tostring(sum7o._available) .. '/' .. tostring(sum7o._fails)
+)
+print('ok   fm timeouts never disable; 3 hard failures trip breaker')
+
+-- fm absent: probe fails, respond is never attempted
+local M8 = load_plugin()
+M8.setup { skip_keybinds = true }
+fm_reset('', 'absent')
+written, picks_shown = {}, {}
+rex.ui.pick = function(o)
+  picks_shown[#picks_shown + 1] = o
+  return nil, 'cancelled'
+end
+actions.replay_command.run { block_id = 'block:test' }
+assert(respond_calls() == 0, 'responded without fm')
+assert(picks_shown[1].items[1].title == 'docs.test/guide', 'absent fm lost raw title')
+print('ok   fm absent uses raw titles, never responds')
+
+-- disable switch + single item short-circuit
+local M9 = load_plugin()
+M9.setup { skip_keybinds = true, summarize = { enabled = false } }
+fm_reset('1: nope\n2: nope2\n3: nope3\n')
+written, picks_shown = {}, {}
+rex.ui.pick = function(o)
+  picks_shown[#picks_shown + 1] = o
+  return nil, 'cancelled'
+end
+actions.replay_command.run { block_id = 'block:test' }
+assert(respond_calls() == 0, 'summarize ran while disabled')
+assert(picks_shown[1].items[1].title == 'docs.test/guide', 'disabled path lost raw title')
+fm_reset('1: solo\n')
+written, picks_shown = {}, {}
+fake_output = 'solo https://solo.test/one'
+actions.replay_command.run { block_id = 'block:test' }
+assert(respond_calls() == 0, 'fm called for single item')
+assert(written[1] == 'open https://solo.test/one', 'single path broke under summarizer')
+fake_output = 'https://git.test/pr/new/feat-login `make deploy` https://docs.test/guide'
+print('ok   summarize disabled + single item never call fm')
 
 -- ── isolation guard (must stay last) ─────────────────────────────────────
 -- No fixture item may ever reach the real recall cache: if the override

@@ -49,6 +49,7 @@ end
 
 local util = require('rex_replay.util')
 local extractors = require('rex_replay.extractors')
+local summarizer = require('rex_replay.summarizer')
 local actions = require('rex_replay.actions')
 
 local function setup(opts)
@@ -58,6 +59,7 @@ local function setup(opts)
   end
   -- custom first, then the plugin's defaults, like the wezterm config merge
   extractors.set_extractors(opts.extractors)
+  summarizer.configure(opts.summarize)
   actions.register_actions()
 
   if opts.skip_keybinds then

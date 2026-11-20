@@ -3,6 +3,7 @@
 local util = require('rex_replay.util')
 local capture = require('rex_replay.capture')
 local extractors = require('rex_replay.extractors')
+local summarizer = require('rex_replay.summarizer')
 
 local TERMINAL = 'com.superlogical.terminal'
 
@@ -47,7 +48,9 @@ local function replay_command(ctx)
     util.log_error('capture failed: ' .. tostring(err))
     return
   end
-  handle_selection(ctx.block_id, extractors.extract_all(text))
+  -- fm summaries are generated here, once, and ride into the cache so
+  -- replay_recall re-serves the same list without a second model call
+  handle_selection(ctx.block_id, summarizer.summarize(extractors.extract_all(text)))
 end
 
 local function replay_recall(ctx)

@@ -155,6 +155,40 @@ matches again after you used the first one, until the next replay replaces
 the cache. Like the WezTerm plugin, a list of exactly one match is typed
 straight to the prompt without asking.
 
+## Summaries (`fm`)
+
+With more than one match, the row titles are replaced with short action
+summaries — `open PR feat-login in web` instead of the raw URL — generated
+by the macOS on-device `fm` CLI (Apple Foundation Models; nothing leaves
+the machine). All items go through one batched `fm respond` call, and the
+prompt instructs the model to answer one line per item with labels shorter
+than the picker row (43 characters); anything longer is elided locally
+anyway. Only the displayed title changes: what gets typed at the prompt,
+and what the recall cache re-serves, is always the full command.
+
+The plugin degrades silently — any row whose summary is missing, refused,
+or a duplicate of another row keeps its raw elided title, and if `fm` is
+missing or errors the whole list falls back to raw titles (three hard
+failures stop further calls until the next config reload). A single
+auto-typed match never calls the model.
+
+Tune it under `summarize =`:
+
+```lua
+replay.setup({
+  summarize = {
+    enabled = true,     -- default true; false keeps raw titles
+    cmd = { 'fm' },     -- the fm executable; default { 'fm' }
+    chars = 43,         -- length limit stated in the prompt (and enforced)
+    timeout = 12,       -- seconds per fm call
+    max_items = 24,     -- items past this keep raw titles
+  },
+})
+```
+
+The summaries are generated once, at replay time, and stored in the recall
+cache — `ctrl+b>q` shows the same labels without a second model call.
+
 ## How it differs from the WezTerm plugin
 
 * **No shell integration required.** There are no semantic zones in Rex, so
@@ -188,6 +222,7 @@ plugin/rex_replay/
   capture.lua              terminal.format + blob_read paging
   extractors.lua           built-ins, validation, newest-first ranking
   actions.lua              replay_command / replay_recall
+  summarizer.lua           fm action summaries for picker titles
   util.lua                 logging, UTF-8-safe tail cut, recall cache
 test/replay_test.lua       stubbed-rex suite
 ```

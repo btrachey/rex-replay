@@ -52,12 +52,24 @@ local ELLIPSIS = '\226\128\166' -- U+2026
 local TITLE_HEAD = 24
 local TITLE_TAIL = 18
 
-local function elide_middle(s)
-  if #s <= TITLE_HEAD + #ELLIPSIS + TITLE_TAIL then
+local function elide_middle(s, width)
+  local head_n, tail_n = TITLE_HEAD, TITLE_TAIL
+  if width ~= nil then
+    local budget = math.max(4, width - #ELLIPSIS)
+    head_n = math.floor(budget / 2)
+    tail_n = budget - head_n
+    if head_n < 1 then
+      head_n = 1
+    end
+    if tail_n < 1 then
+      tail_n = 1
+    end
+  end
+  if #s <= head_n + #ELLIPSIS + tail_n then
     return s
   end
   -- head: end at a character boundary (back up off a continuation byte)
-  local head_end = TITLE_HEAD
+  local head_end = head_n
   while head_end > 1 do
     local b = s:byte(head_end + 1)
     if b == nil or b < 0x80 or b >= 0xC0 then
@@ -65,7 +77,7 @@ local function elide_middle(s)
     end
     head_end = head_end - 1
   end
-  local tail = tail_bytes(s, TITLE_TAIL)
+  local tail = tail_bytes(s, tail_n)
   return s:sub(1, head_end) .. ELLIPSIS .. tail
 end
 
