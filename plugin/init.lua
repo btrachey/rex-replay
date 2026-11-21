@@ -59,6 +59,7 @@ local function setup(opts)
   end
   -- custom first, then the plugin's defaults, like the wezterm config merge
   extractors.set_extractors(opts.extractors)
+  extractors.set_title_width(opts.title_width)
   summarizer.configure(opts.summarize)
   actions.register_actions()
 

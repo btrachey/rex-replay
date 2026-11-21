@@ -322,7 +322,7 @@ check('unbalanced backtick', ids(replay._extract_all('just `unbalanced')), {})
 local items = replay._extract_all('https://k.test/a `run me`')
 for _, it in ipairs(items) do
   for k in pairs(it) do
-    assert(k == 'id' or k == 'title' or k == 'subtitle' or k == 'icon', 'undocumented key ' .. k)
+    assert(k == 'id' or k == 'title' or k == 'subtitle' or k == 'icon' or k == 'detail', 'undocumented key ' .. k)
   end
 end
 print('ok   pick items clean of ranking keys')
@@ -363,6 +363,26 @@ assert(
 )
 assert(twin_ids['open https://github.com/TopGolf/strapi-cms/pull/new/feat-TGA-99999-zz-other-branch'], 'id elided')
 print('ok   long twins: distinct tail-visible titles, full ids')
+
+-- setup{title_width=N} overrides the elision budget (client-width A/B knob)
+local Mtw = load_plugin()
+Mtw.setup { skip_keybinds = true, title_width = 10 }
+local tw = Mtw._extract_all(
+  'x https://github.com/TopGolf/strapi-cms/pull/new/feat-TGA-18210-update-booking-content y '
+    .. 'z https://acme.test/short-ccc w'
+)
+assert(#tw == 2, 'tw count: ' .. #tw)
+-- newest first: [1] = acme.test (19 chars, elided at width 10), [2] = github twin
+assert(
+  tw[1].title:find('acm', 1, true) and tw[1].title:find('…', 1, true) and #tw[1].title <= 10,
+  'width 10 not applied: ' .. tw[1].title
+)
+assert(tw[2].title:find('git', 1, true) and tw[2].title:find('tent', 1, true), 'twin not head+tail: ' .. tw[2].title)
+local Mwide = load_plugin()
+Mwide.setup { skip_keybinds = true, title_width = 200 }
+local wide = Mwide._extract_all('see https://github.com/TopGolf/strapi-cms/pull/new/feat-x done')
+assert(wide[1].title == 'github.com/TopGolf/strapi-cms/pull/new/feat-x', 'wide title elided: ' .. wide[1].title)
+print('ok   title_width overrides elision budget')
 
 -- elide_middle never splits a multibyte char at either cut
 local util_mod = require('rex_replay.util')
@@ -668,6 +688,10 @@ local shown_items = picks_shown[1].items
 assert(shown_items[1].title == 'read the guide', 'title 1: ' .. shown_items[1].title)
 assert(shown_items[2].title == 'run make deploy', 'title 2: ' .. shown_items[2].title)
 assert(shown_items[3].title == 'open PR feat-login in web', 'title 3: ' .. shown_items[3].title)
+-- labeled rows show the raw command underneath, in the quieter subtitle
+assert(shown_items[1].subtitle == 'docs.test/guide', 'subtitle 1: ' .. tostring(shown_items[1].subtitle))
+assert(shown_items[3].subtitle == 'git.test/pr/new/feat-login', 'subtitle 3: ' .. tostring(shown_items[3].subtitle))
+assert(shown_items[1].detail == 'URIs' and shown_items[2].detail == 'backticks', 'detail label lost')
 assert(shown_items[3].id == 'open https://git.test/pr/new/feat-login', 'id changed!: ' .. shown_items[3].id)
 assert(written[1] == 'open https://docs.test/guide', 'typed not full id: ' .. tostring(written[1]))
 reset()
@@ -698,6 +722,10 @@ local dup = picks_shown[1].items
 assert(dup[1].title == 'docs.test/guide', 'dup label applied: ' .. dup[1].title)
 assert(dup[2].title == 'make deploy', 'dup label applied: ' .. dup[2].title)
 assert(dup[3].title == 'read the guide', 'unique label lost: ' .. dup[3].title)
+-- unlabeled rows must NOT get subtitle=raw (would print the string twice)
+assert(dup[1].subtitle == nil, 'fallback row has subtitle: ' .. tostring(dup[1].subtitle))
+assert(dup[2].subtitle == nil, 'fallback row has subtitle: ' .. tostring(dup[2].subtitle))
+assert(dup[3].subtitle == 'git.test/pr/new/feat-login', 'labeled row lacks raw subtitle: ' .. tostring(dup[3].subtitle))
 print('ok   duplicate fm labels fall back to raw titles')
 
 -- missing items keep their raw title (partial answers are fine)

@@ -4,6 +4,15 @@ local util = require('rex_replay.util')
 
 local MAX_ITEMS = 250 -- rex.ui.pick takes at most 2,000; 250 is plenty
 
+-- Picker title elision budget in cells; nil keeps util.elide_middle's
+-- default (~43, measured in Rex for Mac). Exposed via setup{title_width=}
+-- for testing whether the client renders wider.
+local title_width = nil
+
+local function set_title_width(n)
+  title_width = n
+end
+
 -- An extractor: { label = string, icon = string?, prefix = string?,
 --                 postfix = string?, pattern = string } or
 --                { ..., patterns = string[], clean = fun(string): string } or
@@ -151,11 +160,14 @@ local function extract_all(text)
           -- So the title shows only the match — id keeps the full command
           -- with prefix/postfix for typing — and long matches are elided in
           -- the MIDDLE: head and tail survive, and that is where matches
-          -- actually differ (e.g. two PR URLs under one repo).
+          -- actually differ (e.g. two PR URLs under one repo). The
+          -- extractor label sits in `detail` (far end of the row); the
+          -- summarizer fills `subtitle` with the raw command under fm
+          -- labels, so a row never prints the same string twice.
           item = {
             id = label,
-            title = util.elide_middle(ex.display and ex.display(t) or t),
-            subtitle = ex.label,
+            title = util.elide_middle(ex.display and ex.display(t) or t, title_width),
+            detail = ex.label,
             icon = ex.icon,
             pos = m.pos,
             seq = seq,
@@ -190,6 +202,7 @@ return {
   default_extractors = default_extractors,
   validate = validate,
   set_extractors = set_extractors,
+  set_title_width = set_title_width,
   extract_all = extract_all,
   MAX_ITEMS = MAX_ITEMS,
 }

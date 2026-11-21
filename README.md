@@ -163,8 +163,12 @@ by the macOS on-device `fm` CLI (Apple Foundation Models; nothing leaves
 the machine). All items go through one batched `fm respond` call, and the
 prompt instructs the model to answer one line per item with labels shorter
 than the picker row (43 characters); anything longer is elided locally
-anyway. Only the displayed title changes: what gets typed at the prompt,
-and what the recall cache re-serves, is always the full command.
+anyway. Under each summary the quieter `subtitle` line shows the raw
+elided command, and the extractor label (`URIs`, `backticks`, …) sits at
+the far end of the row (`detail`); rows without a summary show the raw
+command as the title and no subtitle, so a row never prints the same
+string twice. Only the displayed title changes: what gets typed at the
+prompt, and what the recall cache re-serves, is always the full command.
 
 The plugin degrades silently — any row whose summary is missing, refused,
 or a duplicate of another row keeps its raw elided title, and if `fm` is
@@ -189,6 +193,9 @@ replay.setup({
                              -- enabled = false) for zero fm delay.
     max_items = 24,          -- items past this keep raw titles
   },
+  title_width = nil,         -- cells for raw-title elision; default ~43,
+                             -- the palette row width measured in Rex for
+                             -- Mac. Raise it to test client rendering.
 })
 ```
 

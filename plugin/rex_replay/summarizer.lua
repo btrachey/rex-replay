@@ -242,6 +242,13 @@ local function summarize(items)
   local labels = parse_labels(res.stdout, count)
   opts._fails = 0 -- consecutive-failure breaker, not lifetime
 
+  -- the current titles ARE the raw elided commands; snapshot before any
+  -- label overwrites one, so applied rows can show the command underneath
+  local raws = {}
+  for i = 1, count do
+    raws[i] = items[i].title
+  end
+
   -- duplicate summaries defeat the point of the list; drop them in favour
   -- of the unique elided raw titles
   local seen = {}
@@ -256,6 +263,10 @@ local function summarize(items)
     local l = labels[i]
     if l and seen[l] == 1 then
       items[i].title = l
+      -- subtitle carries the raw command under the label (quiet second
+      -- line); unlabeled rows keep title=raw and NO subtitle, so nothing
+      -- ever renders the same string twice
+      items[i].subtitle = raws[i]
       applied = applied + 1
     end
   end
