@@ -40,8 +40,8 @@ local function instructions()
     'the command acts on: "remote: Create a pull request for BRANCH" calls',
     'for "open PR BRANCH", never "open link" or "view repository".',
     'Use only names that appear in the item itself; never reuse names from',
-    'this instruction. Add no site names (no "on GitHub"), no quotes, no',
-    'trailing period, no other text.',
+    'this instruction. Add no hosting-site names, no quotes, no trailing',
+    'period, no other text.',
   }, ' ')
 end
 
