@@ -37,11 +37,11 @@ local function instructions()
     'than ' .. opts.chars .. ' characters: a verb plus the identifying object',
     '(repository, branch, PR, file, host:port, package, image name).',
     'When an item shows terminal output in parentheses, use it to name what',
-    'the command acts on — e.g. output "remote: Create a pull request for',
-    "'feat-x' on GitHub" .. ': open PR feat-x' .. '", NOT the generic',
-    '"open link" or "view repository".',
-    'Never emit two identical labels; no quotes, no trailing period, no',
-    'other text.',
+    'the command acts on: "remote: Create a pull request for BRANCH" calls',
+    'for "open PR BRANCH", never "open link" or "view repository".',
+    'Use only names that appear in the item itself; never reuse names from',
+    'this instruction. Add no site names (no "on GitHub"), no quotes, no',
+    'trailing period, no other text.',
   }, ' ')
 end
 
@@ -141,6 +141,22 @@ local function clean_label(line)
   end
   if looks_like_preamble(s) then
     return nil
+  end
+  if s:find('://') or s:find('->') or s:find('<%a+>') then
+    return nil -- echoed command/prompt line, or template bleed from an
+    -- example; a real label never carries a URL, arrow, or <placeholder>
+  end
+  -- the small model bolts "on GitHub" onto nearly every label (~10 of 43
+  -- cells of zero information, and it forces the entity to elide);
+  -- deterministic strip, do not trust the instruction. No pattern
+  -- alternation in Lua: one gsub per preposition.
+  for _, prep in ipairs { 'on', 'to', 'in', 'for', 'at' } do
+    s = s:gsub('%s%f[%w]' .. prep .. '%s+GitHub$', '')
+  end
+  s = s:gsub('%s%f[%w]GitHub$', '')
+  s = s:match('^%s*(.-)%s*$')
+  if #s < 3 then
+    return nil -- nothing but the stripped suffix survived
   end
   if #s > opts.chars then
     s = util.elide_middle(s, opts.chars) -- model ignored the limit

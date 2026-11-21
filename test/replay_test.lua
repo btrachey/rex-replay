@@ -601,10 +601,27 @@ local q = sum._clean_label(' "Open the PR. " ')
 assert(q == 'Open the PR', 'quote/period cleanup: ' .. tostring(q))
 assert(sum._clean_label("I can't summarize that.") == nil, 'refusal not rejected')
 assert(sum._clean_label('   ') == nil, 'blank not rejected')
+-- echoed command/prompt lines and template bleed can never become titles
+assert(sum._clean_label('open https://acme.test/pr/1') == nil, ':// echo accepted')
+assert(sum._clean_label('1: open https://acme.test/x -> open PR x') == nil, '-> echo accepted')
+assert(sum._clean_label('open PR <branch>') == nil, '<placeholder> bleed accepted')
+-- the "on GitHub" boilerplate tax: strip before the width clamp, not after
+assert(sum._clean_label('open PR feat-booking on GitHub') == 'open PR feat-booking', 'on GitHub kept')
+assert(sum._clean_label('open repository strapi-cms to GitHub') == 'open repository strapi-cms', 'to GitHub kept')
+assert(sum._clean_label('on GitHub') == nil, 'suffix-only label survived')
 local long = sum._clean_label(string.rep('z', 200))
 assert(#long <= 43, 'label over width: ' .. #long)
 assert(long:find('…', 1, true), 'over-long label not elided')
-print('ok   fm label parsing, cleanup, width clamp')
+-- suffix strip runs BEFORE the clamp: the 45-char branch still elides, but
+-- now spends its cells on the branch, not the boilerplate
+local br = sum._clean_label('open PR feat-TGA-18210-update-booking-content on GitHub')
+assert(
+  #br <= 43 and br:find('booking-content', 1, true) and not br:find('GitHub'),
+  'suffix ate the row: ' .. tostring(br)
+)
+local br2 = sum._clean_label('open PR feat-booking on GitHub')
+assert(br2 == 'open PR feat-booking', 'fit-after-strip elided: ' .. tostring(br2))
+print('ok   fm label parsing, cleanup, width clamp, echo rejects, GitHub strip')
 
 -- prompt carries the length limit and the numbered commands
 fm_reset('1: a\n2: b\n')
@@ -887,6 +904,14 @@ fake_output = 'solo https://solo.test/one'
 actions.replay_command.run { block_id = 'block:test' }
 assert(respond_calls() == 0, 'fm called for single item')
 assert(written[1] == 'open https://solo.test/one', 'single path broke under summarizer')
+-- the single-item early return is a cache-leak path: extract_all set
+-- ctxline, and this list goes straight to the recall cache
+local cf = io.open(replay._cache_path(), 'r')
+local craw = cf and cf:read('*a') or ''
+if cf then
+  cf:close()
+end
+assert(craw:find('solo.test/one', 1, true) and not craw:find('ctxline', 1, true), 'ctxline leaked into cache')
 fake_output = 'https://git.test/pr/new/feat-login `make deploy` https://docs.test/guide'
 print('ok   summarize disabled + single item never call fm')
 
