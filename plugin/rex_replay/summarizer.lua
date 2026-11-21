@@ -33,23 +33,35 @@ local function instructions()
   return table.concat({
     'You label terminal commands for rows in a small user interface list.',
     'Reply with exactly one line per numbered item, formatted "N: label".',
-    'Each label is an action phrase — a verb plus what it acts on — of at most',
-    'seven words, and must be shorter than ' .. opts.chars .. ' characters.',
-    'Keep the key distinguishing entity (repository, branch, file, host, port,',
-    'package name) so no two labels are interchangeable. Never use quotes,',
-    'never end with a period, and add no other text.',
+    'Each label is a specific action phrase of at most seven words, shorter',
+    'than ' .. opts.chars .. ' characters: a verb plus the identifying object',
+    '(repository, branch, PR, file, host:port, package, image name).',
+    'When an item shows terminal output in parentheses, use it to name what',
+    'the command acts on — e.g. output "remote: Create a pull request for',
+    "'feat-x' on GitHub" .. ': open PR feat-x' .. '", NOT the generic',
+    '"open link" or "view repository".',
+    'Never emit two identical labels; no quotes, no trailing period, no',
+    'other text.',
   }, ' ')
 end
 
 local MAX_ID_CHARS = 200 -- ids are full commands; trim absurd ones from the prompt
+local MAX_CTX_CHARS = 200 -- terminal line shown to the model as context
 
 -- Only the first `count` items (the max_items window) go into the prompt;
 -- numbering the whole 250-item tail would burn model context on labels
--- that get discarded at parse time.
+-- that get discarded at parse time. Each item carries the terminal line
+-- it was found on (item.ctxline, set by extract_all): a bare URL is
+-- ambiguous, its surrounding output usually names the action outright.
 local function build_prompt(items, count)
   local lines = {}
   for i = 1, count do
-    lines[i] = i .. ': ' .. items[i].id:sub(1, MAX_ID_CHARS)
+    local line = i .. ': ' .. items[i].id:sub(1, MAX_ID_CHARS)
+    local ctx = items[i].ctxline
+    if ctx ~= nil and ctx ~= '' then
+      line = line .. '\n   (seen in terminal output: ' .. ctx:sub(1, MAX_CTX_CHARS) .. ')'
+    end
+    lines[i] = line
   end
   return table.concat(lines, '\n')
 end
@@ -274,9 +286,19 @@ local function summarize(items)
   return items
 end
 
+-- Public entry: consume ctxline, then strip it — pick items and the recall
+-- cache may carry only documented keys. All returns flow through here.
+local function summarize_all(items)
+  local out = summarize(items)
+  for _, item in ipairs(out) do
+    item.ctxline = nil
+  end
+  return out
+end
+
 return {
   configure = configure,
-  summarize = summarize,
+  summarize = summarize_all,
   -- internals for tests
   _opts = opts,
   _parse_labels = parse_labels,

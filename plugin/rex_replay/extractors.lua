@@ -114,6 +114,46 @@ local function set_extractors(custom)
   return active_extractors
 end
 
+-- Surrounding line of the match, handed to the summarizer as context: a
+-- bare URL carries almost no signal (is it a PR, a clone hint, a docs
+-- page?), but the terminal output around it usually says exactly that
+-- ("remote: Create a pull request for 'branch' ...", "Strapi is running
+-- at ..."). Whitespace-collapsed, windowed around the match.
+local function line_context(text, pos, match_len)
+  if pos < 0 then
+    return nil -- custom function extractors report no position
+  end
+  local n = #text
+  local s = pos
+  while s > 1 do
+    local c = text:sub(s - 1, s - 1)
+    if c == '\n' or c == '\r' then
+      break
+    end
+    s = s - 1
+  end
+  local e = pos + (match_len or 1) - 1
+  while e < n do
+    local c = text:sub(e + 1, e + 1)
+    if c == '\n' or c == '\r' then
+      break
+    end
+    e = e + 1
+  end
+  -- window around the match so a huge line doesn't flood the prompt
+  if e - s > 220 then
+    local mid = pos + math.floor((match_len or 1) / 2)
+    s = math.max(s, mid - 110)
+    e = math.min(e, mid + 110)
+  end
+  local line = text:sub(s, e):gsub('[\r\n\t]', ' '):gsub('%s+', ' ')
+  line = util.trim(line)
+  if line == '' then
+    return nil
+  end
+  return line
+end
+
 -- Returns pick-ready items: freshest first, deduped on the final label.
 local function extract_all(text)
   local items, seen, seq = {}, {}, 0
@@ -152,6 +192,7 @@ local function extract_all(text)
           if m.pos > item.pos then
             item.pos = m.pos
             item.seq = seq
+            item.ctxline = line_context(text, m.pos, #m.text)
             seq = seq + 1
           end
         else
@@ -171,6 +212,7 @@ local function extract_all(text)
             icon = ex.icon,
             pos = m.pos,
             seq = seq,
+            ctxline = line_context(text, m.pos, #m.text),
           }
           seq = seq + 1
           seen[label] = item
@@ -190,8 +232,8 @@ local function extract_all(text)
   for i = #items, MAX_ITEMS + 1, -1 do
     items[i] = nil
   end
-  -- pick/cache shape: drop the ranking fields so rex.ui.pick and the JSON
-  -- cache carry only documented item keys
+  -- pick/cache shape: drop the ranking fields; ctxline drops separately
+  -- after the summarizer has consumed it (see strip_context)
   for _, item in ipairs(items) do
     item.pos, item.seq = nil, nil
   end

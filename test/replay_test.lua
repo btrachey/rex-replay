@@ -322,7 +322,10 @@ check('unbalanced backtick', ids(replay._extract_all('just `unbalanced')), {})
 local items = replay._extract_all('https://k.test/a `run me`')
 for _, it in ipairs(items) do
   for k in pairs(it) do
-    assert(k == 'id' or k == 'title' or k == 'subtitle' or k == 'icon' or k == 'detail', 'undocumented key ' .. k)
+    assert(
+      k == 'id' or k == 'title' or k == 'subtitle' or k == 'icon' or k == 'detail' or k == 'ctxline', -- summarizer input; stripped before pick/cache
+      'undocumented key ' .. k
+    )
   end
 end
 print('ok   pick items clean of ranking keys')
@@ -651,6 +654,38 @@ assert(pr2:find('5: cmd number 5', 1, true) and not pr2:find('6: cmd number 6', 
 sum.configure {}
 print('ok   prompt: length limit, model pinned, --no-stream, id trim, max_items slice')
 
+-- terminal context: items carry the line they were found on, it reaches
+-- the model, and the public summarize strips it (pick/cache never see it)
+local citems = replay._extract_all(
+  "remote: Create a pull request for 'feat-x' at https://acme.test/pull/new/feat-x done\n"
+    .. 'then visit https://docs.test/guide ok'
+)
+assert(#citems == 2, 'ctx fixture: ' .. #citems)
+local acme
+for _, it in ipairs(citems) do
+  if it.id:find('acme', 1, true) then
+    acme = it
+  end
+end
+assert(acme, 'no acme item')
+assert(
+  acme.ctxline and acme.ctxline:find("Create a pull request for 'feat-x'", 1, true),
+  'ctxline missing: ' .. tostring(acme.ctxline)
+)
+assert(not acme.ctxline:find('\n'), 'ctxline spans lines')
+local cprompt = sum._build_prompt(citems, 2)
+assert(
+  cprompt:find('(seen in terminal output: remote: Create a pull request', 1, true),
+  'ctxline not in prompt: ' .. cprompt:sub(1, 120)
+)
+fm_reset('1: c\n2: d\n')
+sum.configure {}
+sum.summarize(citems)
+for _, it in ipairs(citems) do
+  assert(it.ctxline == nil, 'ctxline leaked past summarize')
+end
+print('ok   fm prompt carries terminal line context; ctxline stripped after')
+
 -- exec timeout budget: opts.timeout is a hard CAP on the fm wait (the
 -- picker must not hide behind a cosmetic feature); the 4 + 0.5/label
 -- scaling can only shorten it, never exceed the cap
@@ -685,6 +720,15 @@ rex.ui.pick = function(o)
 end
 actions.replay_command.run { block_id = 'block:test' }
 local shown_items = picks_shown[1].items
+-- rex.ui.pick errors on undocumented keys; ctxline must be gone by now
+for _, it in ipairs(shown_items) do
+  for k in pairs(it) do
+    assert(
+      k == 'id' or k == 'title' or k == 'subtitle' or k == 'icon' or k == 'detail',
+      'pick item undocumented key ' .. k
+    )
+  end
+end
 assert(shown_items[1].title == 'read the guide', 'title 1: ' .. shown_items[1].title)
 assert(shown_items[2].title == 'run make deploy', 'title 2: ' .. shown_items[2].title)
 assert(shown_items[3].title == 'open PR feat-login in web', 'title 3: ' .. shown_items[3].title)
