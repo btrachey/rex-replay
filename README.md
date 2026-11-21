@@ -160,10 +160,13 @@ straight to the prompt without asking.
 With more than one match, the row titles are replaced with short action
 summaries — `open PR feat-login in web` instead of the raw URL — generated
 by the macOS on-device `fm` CLI (Apple Foundation Models; nothing leaves
-the machine). All items go through one batched `fm respond` call, and the
-prompt instructs the model to answer one line per item with labels shorter
-than the picker row (43 characters); anything longer is elided locally
-anyway. Under each summary the quieter `subtitle` line shows the raw
+the machine). All items go through one batched `fm respond` call, and each
+item carries the terminal line it was found on — a bare URL is ambiguous,
+but the surrounding output ("remote: Create a pull request for 'feat-x'
+…", "Strapi is running …") usually names the action outright. The prompt
+instructs the model to answer one line per item with a specific label —
+verb plus identifying object — shorter than the picker row (43
+characters); anything longer is elided locally anyway. Under each summary the quieter `subtitle` line shows the raw
 elided command, and the extractor label (`URIs`, `backticks`, …) sits at
 the far end of the row (`detail`); rows without a summary show the raw
 command as the title and no subtitle, so a row never prints the same
