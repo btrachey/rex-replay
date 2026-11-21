@@ -182,8 +182,11 @@ replay.setup({
                              -- --no-stream -i <instructions> <prompt> are
                              -- appended to it
     chars = 43,              -- length limit stated in the prompt (and enforced)
-    timeout = 12,            -- minimum seconds per fm call; scales with the
-                             -- batch (up to 30s) since generation is output-bound
+    timeout = 10,            -- HARD CAP on seconds the picker waits for fm;
+                             -- scales down for small batches (4 + 0.5/label),
+                             -- never past this. Raise it to trade promptness
+                             -- for labels on big lists; lower it (or use
+                             -- enabled = false) for zero fm delay.
     max_items = 24,          -- items past this keep raw titles
   },
 })

@@ -12,7 +12,8 @@ local util = require('rex_replay.util')
 -- The palette row is ~43 cells on Rex for Mac; the prompt states the limit
 -- and the result is also enforced locally after parsing.
 local DEFAULT_CHARS = 43
-local DEFAULT_TIMEOUT = 12
+local DEFAULT_TIMEOUT = 10 -- hard cap on the fm wait; the picker must not
+-- sit invisible behind a cosmetic feature (fallback is free: raw titles)
 local DEFAULT_MAX_ITEMS = 24
 
 local opts = {} -- set by configure()
@@ -216,10 +217,13 @@ local function summarize(items)
   argv[#argv + 1] = '-i'
   argv[#argv + 1] = instructions()
   argv[#argv + 1] = build_prompt(items, count)
-  -- batch generation is output-bound (~0.5 s/label measured); the budget
-  -- scales with the batch, 30s cap on the SCALED part only — the explicit
-  -- timeout option stays a true floor (timeout = 45 means at least 45)
-  local budget = math.max(opts.timeout, math.min(30, 4 + 1.2 * count))
+  -- generation is output-bound (~0.5 s/label measured); the wait scales
+  -- WITH the batch but is capped by the timeout option, so the picker
+  -- always appears promptly — on cap the whole list keeps raw titles,
+  -- which is a free fallback (labels are cosmetic; ids never change).
+  -- A user who would rather wait longer for labels raises `timeout`.
+  local budget = math.max(1, math.floor(math.min(opts.timeout, 4 + 0.5 * count)))
+  util.log_info(string.format('summarizer: asking fm for %d labels (<= %ds)...', count, budget))
   local res, err = rex.exec(argv, { cwd = os.getenv('HOME') or '/tmp', timeout = budget })
   if res == nil or not res.ok then
     -- a missing program or a hard error is permanent for this config

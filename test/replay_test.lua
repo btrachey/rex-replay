@@ -631,30 +631,26 @@ assert(pr2:find('5: cmd number 5', 1, true) and not pr2:find('6: cmd number 6', 
 sum.configure {}
 print('ok   prompt: length limit, model pinned, --no-stream, id trim, max_items slice')
 
--- exec timeout budget: explicit timeout is a true FLOOR; the auto-scaled
--- part (4 + 1.2/label) is what the 30s cap applies to
+-- exec timeout budget: opts.timeout is a hard CAP on the fm wait (the
+-- picker must not hide behind a cosmetic feature); the 4 + 0.5/label
+-- scaling can only shorten it, never exceed the cap
 local mi2 = { { id = 'open https://a.test/x', title = 'x' }, { id = 'open https://b.test/y', title = 'y' } }
 sum.configure {}
 sum.summarize(mi2)
-assert(fm.last_opts.timeout == 12, 'floor not kept: ' .. tostring(fm.last_opts.timeout))
+assert(fm.last_opts.timeout == 5, 'small batch budget: ' .. tostring(fm.last_opts.timeout))
 sum.configure { timeout = 45 }
 sum.summarize(mi2)
-assert(fm.last_opts.timeout == 45, 'user timeout clamped: ' .. tostring(fm.last_opts.timeout))
-local mid = {}
-for i = 1, 10 do
-  mid[i] = { id = 'cmd ' .. i, title = 'r' }
-end
-sum.configure {}
-sum.summarize(mid) -- 4 + 1.2*10 = 16 > floor 12
-assert(math.abs((fm.last_opts.timeout or 0) - 16) < 0.01, 'no scaling: ' .. tostring(fm.last_opts.timeout))
+assert(fm.last_opts.timeout == 5, 'small batch should scale below cap: ' .. tostring(fm.last_opts.timeout))
 local many2 = {}
 for i = 1, 40 do
   many2[i] = { id = 'cmd ' .. i, title = 'r' }
 end
+sum.summarize(many2) -- count 24 -> 4 + 12 = 16, under the 45 cap
+assert(fm.last_opts.timeout == 16, 'big batch budget: ' .. tostring(fm.last_opts.timeout))
 sum.configure {}
-sum.summarize(many2) -- count 24 -> scaled part caps at 30
-assert(fm.last_opts.timeout == 30, 'cap missing: ' .. tostring(fm.last_opts.timeout))
-print('ok   exec timeout: user floor, auto-scale, cap on scaled part only')
+sum.summarize(many2) -- scaling 16 capped by default timeout 10
+assert(fm.last_opts.timeout == 10, 'cap not applied: ' .. tostring(fm.last_opts.timeout))
+print('ok   exec timeout: scaling under a hard cap, picker never delayed past timeout')
 
 -- titles replaced, ids untouched, summaries cached for recall
 logged = {}
