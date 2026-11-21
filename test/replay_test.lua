@@ -177,9 +177,10 @@ rex = {
     actions[def.name] = def
   end,
   json = json_stub(),
-  exec = function(argv)
+  exec = function(argv, opts)
     if argv[1] == 'fm' then -- scripted summarizer backend
       fm.calls[#fm.calls + 1] = argv
+      fm.last_opts = opts or {}
       if fm.mode == 'absent' then
         return nil, 'not_found'
       end
@@ -629,6 +630,31 @@ local pr2 = last_prompt()
 assert(pr2:find('5: cmd number 5', 1, true) and not pr2:find('6: cmd number 6', 1, true), 'prompt not sliced')
 sum.configure {}
 print('ok   prompt: length limit, model pinned, --no-stream, id trim, max_items slice')
+
+-- exec timeout budget: explicit timeout is a true FLOOR; the auto-scaled
+-- part (4 + 1.2/label) is what the 30s cap applies to
+local mi2 = { { id = 'open https://a.test/x', title = 'x' }, { id = 'open https://b.test/y', title = 'y' } }
+sum.configure {}
+sum.summarize(mi2)
+assert(fm.last_opts.timeout == 12, 'floor not kept: ' .. tostring(fm.last_opts.timeout))
+sum.configure { timeout = 45 }
+sum.summarize(mi2)
+assert(fm.last_opts.timeout == 45, 'user timeout clamped: ' .. tostring(fm.last_opts.timeout))
+local mid = {}
+for i = 1, 10 do
+  mid[i] = { id = 'cmd ' .. i, title = 'r' }
+end
+sum.configure {}
+sum.summarize(mid) -- 4 + 1.2*10 = 16 > floor 12
+assert(math.abs((fm.last_opts.timeout or 0) - 16) < 0.01, 'no scaling: ' .. tostring(fm.last_opts.timeout))
+local many2 = {}
+for i = 1, 40 do
+  many2[i] = { id = 'cmd ' .. i, title = 'r' }
+end
+sum.configure {}
+sum.summarize(many2) -- count 24 -> scaled part caps at 30
+assert(fm.last_opts.timeout == 30, 'cap missing: ' .. tostring(fm.last_opts.timeout))
+print('ok   exec timeout: user floor, auto-scale, cap on scaled part only')
 
 -- titles replaced, ids untouched, summaries cached for recall
 logged = {}

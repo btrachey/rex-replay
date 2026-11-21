@@ -216,10 +216,10 @@ local function summarize(items)
   argv[#argv + 1] = '-i'
   argv[#argv + 1] = instructions()
   argv[#argv + 1] = build_prompt(items, count)
-  -- batch generation is output-bound (~0.5 s/label measured); a fixed
-  -- budget would time out full 24-item batches into raw titles on the
-  -- busy panes that most want summaries
-  local budget = math.min(30, math.max(opts.timeout, 4 + 1.2 * count))
+  -- batch generation is output-bound (~0.5 s/label measured); the budget
+  -- scales with the batch, 30s cap on the SCALED part only — the explicit
+  -- timeout option stays a true floor (timeout = 45 means at least 45)
+  local budget = math.max(opts.timeout, math.min(30, 4 + 1.2 * count))
   local res, err = rex.exec(argv, { cwd = os.getenv('HOME') or '/tmp', timeout = budget })
   if res == nil or not res.ok then
     -- a missing program or a hard error is permanent for this config
